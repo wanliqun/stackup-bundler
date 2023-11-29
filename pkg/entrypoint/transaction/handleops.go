@@ -111,12 +111,7 @@ func HandleOps(opts *Opts) (txn *types.Transaction, err error) {
 	}
 	auth.Nonce = big.NewInt(int64(nonce))
 
-	if opts.BaseFee != nil && opts.Tip != nil {
-		auth.GasTipCap = SuggestMeanGasTipCap(opts.Tip, opts.Batch)
-		auth.GasFeeCap = SuggestMeanGasFeeCap(opts.BaseFee, opts.Tip, opts.Batch)
-	} else if opts.GasPrice != nil {
-		auth.GasPrice = SuggestMeanGasPrice(opts.GasPrice, opts.Batch)
-	} else {
+	if (opts.BaseFee == nil || opts.Tip == nil) && opts.GasPrice == nil {
 		return nil, errors.New("transaction: either the dynamic or legacy gas fees must be set")
 	}
 
