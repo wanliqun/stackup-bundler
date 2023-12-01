@@ -123,7 +123,10 @@ func PrivateMode() {
 
 	exp := expire.New(conf.MaxOpTTL)
 
-	relayer := relay.New(eoa, eth, chain, beneficiary, logr)
+	relayer, err := relay.New(db, eoa, eth, chain, beneficiary, logr)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	paymaster := paymaster.New(db)
 
