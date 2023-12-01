@@ -53,16 +53,6 @@ func transactionDBKey(sender common.Address, nonce uint64) []byte {
 		dbKeyPrefix, "txn", sender.String(), strconv.FormatUint(nonce, 10)),
 	)
 }
-func parseNonceFromDBValue(data []byte) (uint64, error) {
-	return strconv.ParseUint(string(data), 10, 64)
-}
-
-func parseTxnFromDBValue(data []byte) (*types.Transaction, error) {
-	var txn types.Transaction
-	err := txn.UnmarshalBinary(data)
-
-	return &txn, err
-}
 
 // Sender implements a nonce-custody transaction sending mechanism for bundling,
 // which assigns a unique, self-incrementing nonce to each bundle transaction.
@@ -118,14 +108,14 @@ func (s *Sender) loadFromDisk() error {
 			err := item.Value(func(data []byte) error {
 				switch strSplits[1] {
 				case "nonce":
-					nonce, err := parseNonceFromDBValue(data)
+					nonce, err := strconv.ParseUint(string(data), 10, 64)
 					if err != nil {
 						return err
 					}
 					s.nonces[sender] = &noncePairs{nextNonce: nonce}
 				case "txn":
-					txn, err := parseTxnFromDBValue(data)
-					if err != nil {
+					txn := &types.Transaction{}
+					if err := txn.UnmarshalBinary(data); err != nil {
 						return err
 					}
 					s.addObserveeTxn(sender, txn)
