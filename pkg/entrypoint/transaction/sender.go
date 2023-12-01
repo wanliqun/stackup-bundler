@@ -57,9 +57,11 @@ func transactionDBKey(sender common.Address, nonce uint64) []byte {
 // Sender implements a nonce-custody transaction sending mechanism for bundling,
 // which assigns a unique, self-incrementing nonce to each bundle transaction.
 //
-// This mechanism continuously retries the transaction in case of abnormal occurrences,
-// such as failed broadcasting or low gas price (in which case the gas price may need to
-// be adjusted).
+// This mechanism continuously retries the transaction in case of drop off
+// the transaction pool.
+//
+// TODO: Resubmit transaction by adjusting gas price for not being mined due to
+// low gas price.
 type Sender struct {
 	mu sync.Mutex
 
