@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/stackup-wallet/stackup-bundler/internal/config"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/filter"
 	"github.com/stackup-wallet/stackup-bundler/pkg/gas"
 	"github.com/stackup-wallet/stackup-bundler/pkg/userop"
@@ -51,6 +52,17 @@ func GetGasEstimateWithEthClient(
 	maxGasLimit *big.Int,
 ) GetGasEstimateFunc {
 	return func(ep common.Address, op *userop.UserOperation) (verificationGas uint64, callGas uint64, err error) {
+		if config.Shared().Unsafe {
+			return gas.EstimateGasUnsafe(&gas.EstimateInput{
+				Rpc:         rpc,
+				EntryPoint:  ep,
+				Op:          op,
+				Ov:          ov,
+				ChainID:     chain,
+				MaxGasLimit: maxGasLimit,
+			})
+		}
+
 		return gas.EstimateGas(&gas.EstimateInput{
 			Rpc:         rpc,
 			EntryPoint:  ep,

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -11,6 +12,19 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stackup-wallet/stackup-bundler/pkg/signer"
 )
+
+var (
+	sharedValue *Values
+	oncer       sync.Once
+)
+
+func Shared() *Values {
+	oncer.Do(func() {
+		sharedValue = GetValues()
+	})
+
+	return sharedValue
+}
 
 type Values struct {
 	// Documented variables.
@@ -24,6 +38,7 @@ type Values struct {
 	MaxOpTTL                time.Duration
 	MaxOpsForUnstakedSender int
 	Beneficiary             string
+	Unsafe                  bool
 
 	// Searcher mode variables.
 	EthBuilderUrl     string
@@ -88,6 +103,7 @@ func GetValues() *Values {
 	viper.SetDefault("erc4337_bundler_max_batch_gas_limit", 25000000)
 	viper.SetDefault("erc4337_bundler_max_op_ttl_seconds", 180)
 	viper.SetDefault("erc4337_bundler_max_ops_for_unstaked_sender", 4)
+	viper.SetDefault("erc4337_bundler_unsafe", false)
 	viper.SetDefault("erc4337_bundler_blocks_in_the_future", 25)
 	viper.SetDefault("erc4337_bundler_otel_insecure_mode", false)
 	viper.SetDefault("erc4337_bundler_debug_mode", false)
@@ -117,6 +133,7 @@ func GetValues() *Values {
 	_ = viper.BindEnv("erc4337_bundler_max_batch_gas_limit")
 	_ = viper.BindEnv("erc4337_bundler_max_op_ttl_seconds")
 	_ = viper.BindEnv("erc4337_bundler_max_ops_for_unstaked_sender")
+	_ = viper.BindEnv("erc4337_bundler_unsafe")
 	_ = viper.BindEnv("erc4337_bundler_eth_builder_url")
 	_ = viper.BindEnv("erc4337_bundler_blocks_in_the_future")
 	_ = viper.BindEnv("erc4337_bundler_otel_service_name")
@@ -175,6 +192,7 @@ func GetValues() *Values {
 	maxBatchGasLimit := big.NewInt(int64(viper.GetInt("erc4337_bundler_max_batch_gas_limit")))
 	maxOpTTL := time.Second * viper.GetDuration("erc4337_bundler_max_op_ttl_seconds")
 	maxOpsForUnstakedSender := viper.GetInt("erc4337_bundler_max_ops_for_unstaked_sender")
+	unsafe := viper.GetBool("erc4337_bundler_unsafe")
 	ethBuilderUrl := viper.GetString("erc4337_bundler_eth_builder_url")
 	blocksInTheFuture := viper.GetInt("erc4337_bundler_blocks_in_the_future")
 	otelServiceName := viper.GetString("erc4337_bundler_otel_service_name")
@@ -196,6 +214,7 @@ func GetValues() *Values {
 		MaxBatchGasLimit:        maxBatchGasLimit,
 		MaxOpTTL:                maxOpTTL,
 		MaxOpsForUnstakedSender: maxOpsForUnstakedSender,
+		Unsafe:                  unsafe,
 		EthBuilderUrl:           ethBuilderUrl,
 		BlocksInTheFuture:       blocksInTheFuture,
 		OTELServiceName:         otelServiceName,

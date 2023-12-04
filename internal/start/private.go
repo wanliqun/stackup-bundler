@@ -33,7 +33,7 @@ import (
 )
 
 func PrivateMode() {
-	conf := config.GetValues()
+	conf := config.Shared()
 
 	logr := logger.NewZeroLogr().
 		WithName("stackup_bundler").
