@@ -121,7 +121,6 @@ func EstimateGasUnsafe(in *EstimateInput) (verificationGas uint64, callGas uint6
 				r = m - 1
 				// Set final.
 				f = m
-				verificationGas = uint64(f)
 				continue
 			} else if isPrefundNotPaid(err) {
 				// VGL too high, go lower.
@@ -140,6 +139,7 @@ func EstimateGasUnsafe(in *EstimateInput) (verificationGas uint64, callGas uint6
 		}
 		f = (f * (100 + baseVGLBuffer)) / 100
 		data["verificationGasLimit"] = hexutil.EncodeBig(big.NewInt(int64(f)))
+		verificationGas = uint64(f)
 	}
 
 	// Find the optimal callGasLimit by setting the gas price to 0 and maxing out the gas limit. We don't run
