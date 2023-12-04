@@ -127,6 +127,7 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 		// Call handleOps() with gas estimate. Any userOps that cause a revert at this stage will be
 		// caught and dropped in the next iteration.
 		txn, err := r.sender.HandleOps(&opts)
+
 		if err != nil {
 			return err
 		}
