@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"time"
 
+	badger "github.com/dgraph-io/badger/v3"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/go-logr/logr"
@@ -25,6 +26,7 @@ import (
 // propagated through the network and it is impossible to prevent collisions from multiple bundlers trying to
 // relay the same ops.
 type Relayer struct {
+	sender      *transaction.Sender
 	eoa         *signer.EOA
 	eth         *ethclient.Client
 	chainID     *big.Int
@@ -35,20 +37,28 @@ type Relayer struct {
 
 // New initializes a new EOA relayer for sending batches to the EntryPoint.
 func New(
+	db *badger.DB,
 	eoa *signer.EOA,
 	eth *ethclient.Client,
 	chainID *big.Int,
 	beneficiary common.Address,
 	l logr.Logger,
-) *Relayer {
+) (*Relayer, error) {
+	l = l.WithName("relayer")
+	sender, err := transaction.NewSender(eth, db, l)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Relayer{
+		sender:      sender,
 		eoa:         eoa,
 		eth:         eth,
 		chainID:     chainID,
 		beneficiary: beneficiary,
-		logger:      l.WithName("relayer"),
+		logger:      l,
 		waitTimeout: DefaultWaitTimeout,
-	}
+	}, nil
 }
 
 // SetWaitTimeout sets the total time to wait for a transaction to be included. When a timeout is reached, the
@@ -116,7 +126,8 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 
 		// Call handleOps() with gas estimate. Any userOps that cause a revert at this stage will be
 		// caught and dropped in the next iteration.
-		txn, err := transaction.HandleOps(&opts)
+		txn, err := r.sender.HandleOps(&opts)
+
 		if err != nil {
 			return err
 		}
