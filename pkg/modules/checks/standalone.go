@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/stackup-wallet/stackup-bundler/internal/config"
 	"github.com/stackup-wallet/stackup-bundler/pkg/altmempools"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/simulation"
@@ -107,6 +108,11 @@ func (s *Standalone) SimulateOp() modules.UserOpHandlerFunc {
 			}
 			return nil
 		})
+
+		if config.Shared().Unsafe {
+			return g.Wait()
+		}
+
 		g.Go(func() error {
 			out, err := simulation.TraceSimulateValidation(&simulation.TraceInput{
 				Rpc:         s.rpc,

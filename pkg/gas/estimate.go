@@ -73,6 +73,126 @@ func retryEstimateGas(err error, vgl int64, in *EstimateInput) (uint64, uint64, 
 	return 0, 0, err
 }
 
+// EstimateGasUnsafe uses the simulateHandleOp method on the EntryPoint to derive an estimate for
+// verificationGasLimit and callGasLimit.
+func EstimateGasUnsafe(in *EstimateInput) (verificationGas uint64, callGas uint64, err error) {
+	// Skip if maxFeePerGas is zero.
+	if in.Op.MaxFeePerGas.Cmp(big.NewInt(0)) != 1 {
+		return 0, 0, errors.NewRPCError(
+			errors.INVALID_FIELDS,
+			"maxFeePerGas must be more than 0",
+			nil,
+		)
+	}
+
+	// Set the initial conditions.
+	data, err := in.Op.ToMap()
+	if err != nil {
+		return 0, 0, err
+	}
+	data["maxPriorityFeePerGas"] = hexutil.EncodeBig(in.Op.MaxFeePerGas)
+	data["verificationGasLimit"] = hexutil.EncodeBig(big.NewInt(0))
+	data["callGasLimit"] = hexutil.EncodeBig(big.NewInt(0))
+
+	// Find the optimal verificationGasLimit with binary search. Setting gas price to 0 and maxing out the gas
+	// limit here would result in certain code paths not being executed which results in an inaccurate gas
+	// estimate.
+	{
+		l := int64(0)
+		r := in.MaxGasLimit.Int64()
+		f := in.lastVGL
+		var simErr error
+		for in.lastVGL == 0 && r-l >= fallBackBinarySearchCutoff {
+			m := (l + r) / 2
+
+			data["verificationGasLimit"] = hexutil.EncodeBig(big.NewInt(int64(m)))
+			simOp, err := userop.New(data)
+			if err != nil {
+				return 0, 0, err
+			}
+			_, err = execution.SimulateHandleOp(&execution.SimulateInput{
+				Rpc:        in.Rpc,
+				EntryPoint: in.EntryPoint,
+				Op:         simOp,
+			})
+			simErr = err
+			if err == nil {
+				// VGL too high, go lower.
+				r = m - 1
+				// Set final.
+				f = m
+				verificationGas = uint64(f)
+				continue
+			} else if isPrefundNotPaid(err) {
+				// VGL too high, go lower.
+				r = m - 1
+				continue
+			} else if isValidationOOG(err) {
+				// VGL too low, go higher.
+				l = m + 1
+				continue
+			} else {
+				return 0, 0, err
+			}
+		}
+		if f == 0 {
+			return 0, 0, simErr
+		}
+		f = (f * (100 + baseVGLBuffer)) / 100
+		data["verificationGasLimit"] = hexutil.EncodeBig(big.NewInt(int64(f)))
+	}
+
+	// Find the optimal callGasLimit by setting the gas price to 0 and maxing out the gas limit. We don't run
+	// into the same restrictions here as we do with verificationGasLimit.
+	data["maxFeePerGas"] = hexutil.EncodeBig(big.NewInt(0))
+	data["maxPriorityFeePerGas"] = hexutil.EncodeBig(big.NewInt(0))
+	data["callGasLimit"] = hexutil.EncodeBig(in.MaxGasLimit)
+	{
+		l := in.Ov.NonZeroValueCall().Int64()
+		r := in.MaxGasLimit.Int64()
+		f := int64(0)
+		simErr := err
+		for r-l >= fallBackBinarySearchCutoff {
+			m := (l + r) / 2
+
+			data["callGasLimit"] = hexutil.EncodeBig(big.NewInt(int64(m)))
+			simOp, err := userop.New(data)
+			if err != nil {
+				return 0, 0, err
+			}
+			_, err = execution.SimulateHandleOp(&execution.SimulateInput{
+				Rpc:        in.Rpc,
+				EntryPoint: in.EntryPoint,
+				Op:         simOp,
+			})
+			simErr = err
+			if err == nil {
+				// CGL too high, go lower.
+				r = m - 1
+				// Set final.
+				f = m
+				callGas = uint64(f)
+				continue
+			} else if isPrefundNotPaid(err) {
+				// CGL too high, go lower.
+				r = m - 1
+			} else if isExecutionOOG(err) || isExecutionReverted(err) {
+				// CGL too low, go higher.
+				l = m + 1
+				continue
+			} else {
+				// Unexpected error.
+				return 0, 0, err
+			}
+		}
+		if f == 0 {
+			return 0, 0, simErr
+		}
+	}
+
+	return
+}
+
 // EstimateGas uses the simulateHandleOp method on the EntryPoint to derive an estimate for
 // verificationGasLimit and callGasLimit.
 func EstimateGas(in *EstimateInput) (verificationGas uint64, callGas uint64, err error) {
