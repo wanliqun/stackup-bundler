@@ -2,7 +2,6 @@ package transaction
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"strconv"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	"github.com/stackup-wallet/stackup-bundler/internal/dbutils"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint"
 	"github.com/wangjia184/sortedset"
@@ -23,7 +23,7 @@ import (
 const (
 	defaultNonceTooFuture  = uint64(100)
 	defaultFinalizedBlocks = 200
-	defaultMonitorInterval = 15 * time.Second
+	defaultMonitorInterval = 10 * time.Second
 )
 
 var (
@@ -63,9 +63,9 @@ func transactionDBKey(sender common.Address, nonce uint64) []byte {
 // TODO: Resubmit transaction by adjusting gas price for not being mined due to
 // low gas price.
 type Sender struct {
-	mu sync.Mutex
-
+	mu     sync.Mutex
 	logger logr.Logger
+
 	// RPC client
 	eth *ethclient.Client
 	// Persistence db
@@ -86,7 +86,7 @@ func NewSender(eth *ethclient.Client, db *badger.DB, l logr.Logger) (*Sender, er
 	}
 
 	if err := s.loadFromDisk(); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "failed to load from disk")
 	}
 
 	go s.monitor()
@@ -95,30 +95,28 @@ func NewSender(eth *ethclient.Client, db *badger.DB, l logr.Logger) (*Sender, er
 
 func (s *Sender) loadFromDisk() error {
 	return s.db.View(func(dbTxn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-		it := dbTxn.NewIterator(opts)
-		prefix := []byte(dbKeyPrefix)
+		it := dbTxn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
+		prefix := []byte(dbKeyPrefix)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 
 			strSplits := dbutils.SplitValues(string(item.Key()))
-			sender := common.HexToAddress(strSplits[1])
+			sender := common.HexToAddress(strSplits[2])
 
 			err := item.Value(func(data []byte) error {
 				switch strSplits[1] {
 				case "nonce":
 					nonce, err := strconv.ParseUint(string(data), 10, 64)
 					if err != nil {
-						return err
+						return errors.WithMessage(err, "failed to parse next nonce")
 					}
 					s.nonces[sender] = &noncePairs{nextNonce: nonce}
 				case "txn":
 					txn := &types.Transaction{}
 					if err := txn.UnmarshalBinary(data); err != nil {
-						return err
+						return errors.WithMessage(err, "failed to unmarshal txn")
 					}
 					s.addObserveeTxn(sender, txn)
 				default:
@@ -153,13 +151,13 @@ func (s *Sender) HandleOps(opts *Opts) (txn *types.Transaction, err error) {
 	ctx := context.Background()
 	if opts.WaitTimeout > 0 {
 		c, cancel := context.WithTimeout(context.Background(), opts.WaitTimeout)
-		ctx = c
 		defer cancel()
+		ctx = c
 	}
 
 	np, err := s.noncePairs(ctx, opts.Eth, auth.From)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "failed to get next nonce")
 	}
 
 	if np.isTooFuture() {
@@ -179,29 +177,29 @@ func (s *Sender) HandleOps(opts *Opts) (txn *types.Transaction, err error) {
 		return nil, err
 	}
 
+	data, err := txn.MarshalBinary()
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to marshal txn")
+	}
+
 	err = s.db.Update(func(dbTxn *badger.Txn) error {
 		nextNonceStr := strconv.FormatUint(txn.Nonce()+1, 10)
 
 		// Update the next nonce
 		dbNonceKey := senderNextNonceDBKey(auth.From)
 		if err := dbTxn.Set(dbNonceKey, []byte(nextNonceStr)); err != nil {
-			return err
+			return errors.WithMessage(err, "failed to save next nonce")
 		}
 
 		// Store the RLP encoded data of the transaction.
-		data, err := txn.MarshalBinary()
-		if err != nil {
-			return err
-		}
-
 		dbTxnKey := transactionDBKey(auth.From, txn.Nonce())
 		if err := dbTxn.Set(dbTxnKey, data); err != nil {
-			return err
+			return errors.WithMessage(err, "failed to save marshaled txn")
 		}
 
 		// Do the real txn sending
 		if err := opts.Eth.SendTransaction(ctx, txn); err != nil {
-			return err
+			return errors.WithMessage(err, "failed to send transaction")
 		}
 
 		if opts.WaitTimeout == 0 {
@@ -217,10 +215,6 @@ func (s *Sender) HandleOps(opts *Opts) (txn *types.Transaction, err error) {
 			return errors.New("transaction: failed status")
 		}
 
-		// Otherwise, we shall continue to monitor the transaction and enforce the final execution.
-		s.addObserveeTxn(auth.From, txn)
-		s.nonces[auth.From].nextNonce++
-
 		return nil
 	})
 
@@ -228,6 +222,10 @@ func (s *Sender) HandleOps(opts *Opts) (txn *types.Transaction, err error) {
 		s.logger.Error(err, "HandleOps sent failed")
 		return nil, err
 	}
+
+	// We shall continue to monitor the transaction and enforce the final execution.
+	s.addObserveeTxn(auth.From, txn)
+	s.nonces[auth.From].nextNonce++
 
 	return txn, nil
 }
@@ -247,8 +245,14 @@ func (s *Sender) monitor() {
 				continue
 			}
 
-			if finalized {
-				s.deleteObserveeTxn(sender, txn)
+			if !finalized { // Not finalized yet?
+				continue
+			}
+
+			// Otherwise, delete this finalized observee transaction.
+			if err := s.deleteObserveeTxn(sender, txn); err != nil {
+				s.logger.WithValues("sender", sender).
+					Error(err, "Observee Txn deletion failed")
 			}
 		}
 
@@ -260,32 +264,35 @@ func (s *Sender) addObserveeTxn(sender common.Address, txn *types.Transaction) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	txnSortset := s.obsTxns[sender]
-	if txnSortset == nil {
-		txnSortset = sortedset.New()
+	if _, ok := s.obsTxns[sender]; !ok {
+		s.obsTxns[sender] = sortedset.New()
 	}
 
-	txnSortset.AddOrUpdate(
+	s.obsTxns[sender].AddOrUpdate(
 		txn.Hash().String(), sortedset.SCORE(txn.Nonce()), txn,
 	)
-	s.obsTxns[sender] = txnSortset
 }
 
 func (s *Sender) deleteObserveeTxn(sender common.Address, txn *types.Transaction) error {
-	return s.db.Update(func(dbTxn *badger.Txn) error {
+	err := s.db.Update(func(dbTxn *badger.Txn) error {
 		if err := dbTxn.Delete(transactionDBKey(sender, txn.Nonce())); err != nil {
-			return err
-		}
-
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		if obsTxnSortset, ok := s.obsTxns[sender]; ok {
-			obsTxnSortset.Remove(txn.Hash().String())
+			return errors.WithMessage(err, "failed to delete transaction")
 		}
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if obsTxnSortset, ok := s.obsTxns[sender]; ok {
+		obsTxnSortset.Remove(txn.Hash().String())
+	}
+
+	return nil
 }
 
 func (s *Sender) checkObserveeTxn(sender common.Address, txn *types.Transaction) (bool, error) {
@@ -315,7 +322,7 @@ func (s *Sender) checkObserveeTxn(sender common.Address, txn *types.Transaction)
 	}
 
 	// The block number of the transaction is away behind the latest block number, in which case
-	// we shall consider this transaction as finalized.
+	// we shall consider it as finalized.
 	tmpBlockNum := big.NewInt(0).Add(recpt.BlockNumber, big.NewInt(defaultFinalizedBlocks))
 	if tmpBlockNum.Cmp(big.NewInt(int64(latestBlockNum))) <= 0 {
 		return true, nil
@@ -330,7 +337,7 @@ func (s *Sender) selectObserveeTxns() map[common.Address]*types.Transaction {
 
 	res := make(map[common.Address]*types.Transaction)
 	for sender, txnSortset := range s.obsTxns {
-		node := txnSortset.PopMin()
+		node := txnSortset.PeekMin()
 		if node == nil {
 			continue
 		}
