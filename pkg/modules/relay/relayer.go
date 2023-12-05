@@ -9,8 +9,10 @@ import (
 
 	badger "github.com/dgraph-io/badger/v3"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/go-logr/logr"
+	"github.com/stackup-wallet/stackup-bundler/internal/config"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/transaction"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules"
 	"github.com/stackup-wallet/stackup-bundler/pkg/signer"
@@ -124,9 +126,16 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 			return errors.New("estimated gas limit over all user ops limit")
 		}
 
+		var txn *types.Transaction
+		var err error
+
 		// Call handleOps() with gas estimate. Any userOps that cause a revert at this stage will be
 		// caught and dropped in the next iteration.
-		txn, err := r.sender.HandleOps(&opts)
+		if config.Shared().LegacySending {
+			txn, err = transaction.HandleOps(&opts)
+		} else {
+			txn, err = r.sender.HandleOps(&opts)
+		}
 
 		if err != nil {
 			return err
