@@ -3,6 +3,7 @@ package batch
 import (
 	"math/big"
 
+	"github.com/stackup-wallet/stackup-bundler/internal/logger"
 	"github.com/stackup-wallet/stackup-bundler/pkg/gas"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules"
 	"github.com/stackup-wallet/stackup-bundler/pkg/userop"
@@ -15,7 +16,7 @@ func MaintainGasLimit(maxBatchGasLimit *big.Int) modules.BatchHandlerFunc {
 	staticOv := gas.NewDefaultOverhead()
 
 	return func(ctx *modules.BatchHandlerCtx) error {
-		bat := []*userop.UserOperation{}
+		var bat, f []*userop.UserOperation
 		sum := big.NewInt(0)
 		for _, op := range ctx.Batch {
 			static, err := staticOv.CalcPreVerificationGas(op)
@@ -27,10 +28,17 @@ func MaintainGasLimit(maxBatchGasLimit *big.Int) modules.BatchHandlerFunc {
 
 			sum = big.NewInt(0).Add(sum, mga)
 			if sum.Cmp(maxBatchGasLimit) >= 0 {
+				f = append(f, op)
 				break
 			}
 			bat = append(bat, op)
 		}
+
+		if len(f) > 0 {
+			logger.Shared().WithValues("userops", f).
+				Info("userops filtered due to out of max batch gas limit")
+		}
+
 		ctx.Batch = bat
 
 		return nil

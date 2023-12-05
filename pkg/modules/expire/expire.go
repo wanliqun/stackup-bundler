@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stackup-wallet/stackup-bundler/internal/logger"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules"
 )
 
@@ -31,9 +32,13 @@ func (e *ExpireHandler) DropExpired() modules.BatchHandlerFunc {
 			if seenAt, ok := e.seenAt[hash]; !ok {
 				e.seenAt[hash] = time.Now()
 			} else if seenAt.Add(e.ttl).Before(time.Now()) {
-				ctx.MarkOpIndexForRemoval(i)
+				op := ctx.MarkOpIndexForRemoval(i)
+
+				logger.Shared().WithValues("userop", op).
+					Info("userop added to pending removal due to being expired")
 			}
 		}
+
 		return nil
 	}
 }

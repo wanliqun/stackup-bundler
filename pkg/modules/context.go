@@ -49,7 +49,7 @@ func NewBatchHandlerContext(
 
 // MarkOpIndexForRemoval will remove the op by index from the batch and add it to the pending removal array.
 // This should be used for ops that are not to be included on-chain and dropped from the mempool.
-func (c *BatchHandlerCtx) MarkOpIndexForRemoval(index int) {
+func (c *BatchHandlerCtx) MarkOpIndexForRemoval(index int) *userop.UserOperation {
 	batch := []*userop.UserOperation{}
 	var op *userop.UserOperation
 	for i, curr := range c.Batch {
@@ -60,11 +60,12 @@ func (c *BatchHandlerCtx) MarkOpIndexForRemoval(index int) {
 		}
 	}
 	if op == nil {
-		return
+		return nil
 	}
 
 	c.Batch = batch
 	c.PendingRemoval = append(c.PendingRemoval, op)
+	return op
 }
 
 // UserOpHandlerCtx is the object passed to UserOpHandler functions during the Client's SendUserOperation
