@@ -147,6 +147,10 @@ func (s *Standalone) SimulateOp() modules.UserOpHandlerFunc {
 // the first simulation.
 func (s *Standalone) CodeHashes() modules.BatchHandlerFunc {
 	return func(ctx *modules.BatchHandlerCtx) error {
+		if config.Shared().Unsafe {
+			return nil
+		}
+
 		gc := getCodeWithEthClient(s.eth)
 
 		end := len(ctx.Batch) - 1

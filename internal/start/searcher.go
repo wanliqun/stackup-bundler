@@ -136,7 +136,7 @@ func SearcherMode() {
 	)
 
 	// Init Bundler
-	b := bundler.New(mem, chain, conf.SupportedEntryPoints)
+	b := bundler.New(exp, mem, chain, conf.SupportedEntryPoints)
 	b.SetGetBaseFeeFunc(gasprice.GetBaseFeeWithEthClient(eth))
 	b.SetGetGasTipFunc(gasprice.GetGasTipWithEthClient(eth))
 	b.SetGetLegacyGasPriceFunc(gasprice.GetLegacyGasPriceWithEthClient(eth))

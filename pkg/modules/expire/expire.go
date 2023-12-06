@@ -22,6 +22,11 @@ func New(ttl time.Duration) *ExpireHandler {
 	}
 }
 
+// ClearExpiration clears user operation expiration mark.
+func (e *ExpireHandler) ClearExpiration(userOpHash common.Hash) {
+	delete(e.seenAt, userOpHash)
+}
+
 // DropExpired returns a BatchHandlerFunc that will drop UserOperations from the mempool if it has been around
 // for longer than the TTL duration.
 func (e *ExpireHandler) DropExpired() modules.BatchHandlerFunc {

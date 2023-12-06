@@ -12,6 +12,7 @@ import (
 	"github.com/stackup-wallet/stackup-bundler/internal/logger"
 	"github.com/stackup-wallet/stackup-bundler/pkg/mempool"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules"
+	"github.com/stackup-wallet/stackup-bundler/pkg/modules/expire"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules/gasprice"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules/noop"
 	"github.com/stackup-wallet/stackup-bundler/pkg/userop"
@@ -23,6 +24,7 @@ import (
 // Bundler controls the end to end process of creating a batch of UserOperations from the mempool and sending
 // it to the EntryPoint.
 type Bundler struct {
+	exp                  *expire.ExpireHandler
 	mempool              *mempool.Mempool
 	chainID              *big.Int
 	supportedEntryPoints []common.Address
@@ -40,8 +42,13 @@ type Bundler struct {
 
 // New initializes a new EIP-4337 bundler which can be extended with modules for validating batches and
 // excluding UserOperations that should not be sent to the EntryPoint and/or dropped from the mempool.
-func New(mempool *mempool.Mempool, chainID *big.Int, supportedEntryPoints []common.Address) *Bundler {
+func New(
+	exp *expire.ExpireHandler,
+	mempool *mempool.Mempool,
+	chainID *big.Int,
+	supportedEntryPoints []common.Address) *Bundler {
 	return &Bundler{
+		exp:                  exp,
 		mempool:              mempool,
 		chainID:              chainID,
 		supportedEntryPoints: supportedEntryPoints,
@@ -169,6 +176,12 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	if err := i.mempool.RemoveOps(ep, rmOps...); err != nil {
 		l.Error(err, "bundler run error - failed to remove from mempool")
 		return nil, err
+	}
+
+	// Also clear expiration for the removed user operations since these user operation
+	// may be resubmitted if bundle transaction execution failed.
+	for _, op := range rmOps {
+		i.exp.ClearExpiration(op.GetUserOpHash(ctx.EntryPoint, ctx.ChainID))
 	}
 
 	// Update logs for the current run.
