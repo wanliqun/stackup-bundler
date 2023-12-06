@@ -23,7 +23,7 @@ import (
 const (
 	defaultNonceTooFuture  = uint64(100)
 	defaultFinalizedBlocks = 200
-	defaultMonitorInterval = 10 * time.Second
+	defaultMonitorInterval = 15 * time.Second
 )
 
 var (
@@ -41,7 +41,7 @@ func (p *noncePairs) isTooFuture(threshold ...uint64) bool {
 		thresholdv = threshold[0]
 	}
 
-	return p.nextNonce <= p.latestNonce+thresholdv
+	return p.nextNonce > p.latestNonce+thresholdv
 }
 
 func senderNextNonceDBKey(sender common.Address) []byte {
@@ -303,6 +303,8 @@ func (s *Sender) checkObserveeTxn(sender common.Address, txn *types.Transaction)
 	if errors.Is(err, ethereum.NotFound) {
 		// Transaction not yet mined or dropped off the txn pool, let's just try to send
 		// the transaction again no matter it succeeds or not.
+		s.logger.WithValues("txnHash", txn.Hash()).Info("Resending unfound bundle transaction")
+
 		return false, s.eth.SendTransaction(ctx, txn)
 	}
 
