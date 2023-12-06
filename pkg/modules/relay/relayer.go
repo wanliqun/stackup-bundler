@@ -3,7 +3,6 @@
 package relay
 
 import (
-	"errors"
 	"math/big"
 	"time"
 
@@ -12,7 +11,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	"github.com/stackup-wallet/stackup-bundler/internal/config"
+	"github.com/stackup-wallet/stackup-bundler/internal/logger"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/transaction"
 	"github.com/stackup-wallet/stackup-bundler/pkg/modules"
 	"github.com/stackup-wallet/stackup-bundler/pkg/signer"
@@ -95,10 +96,13 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 			est, revert, err := transaction.EstimateHandleOpsGas(&opts)
 
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "failed to estimate `HandleOps` gas")
 			} else if revert != nil {
-				ctx.MarkOpIndexForRemoval(revert.OpIndex)
+				op := ctx.MarkOpIndexForRemoval(revert.OpIndex)
 				estRev = append(estRev, revert.Reason)
+
+				logger.Shared().WithValues("userop", op, "revert", revert).
+					Info("userop added to pending removal due to `HandleOps` estimation revert")
 			} else {
 				opts.GasLimit = est
 				break
@@ -138,7 +142,7 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 		}
 
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "failed to send `HandleOps` transaction")
 		}
 
 		ctx.Data["txn_hash"] = txn.Hash().String()

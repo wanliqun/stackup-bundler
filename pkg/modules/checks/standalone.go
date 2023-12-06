@@ -10,7 +10,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/stackup-wallet/stackup-bundler/internal/config"
+	"github.com/stackup-wallet/stackup-bundler/internal/logger"
 	"github.com/stackup-wallet/stackup-bundler/pkg/altmempools"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/simulation"
@@ -152,15 +154,18 @@ func (s *Standalone) CodeHashes() modules.BatchHandlerFunc {
 			op := ctx.Batch[i]
 			chs, err := getSavedCodeHashes(s.db, op.GetUserOpHash(ctx.EntryPoint, ctx.ChainID))
 			if err != nil {
-				return err
+				return pkgerrors.WithMessage(err, "failed to get code hashes")
 			}
 
 			changed, err := hasCodeHashChanges(chs, gc)
 			if err != nil {
-				return err
+				return pkgerrors.WithMessage(err, "failed to check code hashes change")
 			}
 			if changed {
 				ctx.MarkOpIndexForRemoval(i)
+
+				logger.Shared().WithValues("userop", op).
+					Info("userop added to pending removal due to code hashes being changed")
 			}
 		}
 		return nil
@@ -173,7 +178,7 @@ func (s *Standalone) PaymasterDeposit() modules.BatchHandlerFunc {
 	return func(ctx *modules.BatchHandlerCtx) error {
 		ep, err := entrypoint.NewEntrypoint(ctx.EntryPoint, s.eth)
 		if err != nil {
-			return err
+			return pkgerrors.WithMessage(err, "failed to new entrypoint contract caller")
 		}
 
 		deps := make(map[common.Address]*big.Int)
@@ -186,7 +191,7 @@ func (s *Standalone) PaymasterDeposit() modules.BatchHandlerFunc {
 			if _, ok := deps[pm]; !ok {
 				dep, err := ep.GetDepositInfo(nil, pm)
 				if err != nil {
-					return err
+					return pkgerrors.WithMessage(err, "failed to get deposit info")
 				}
 
 				deps[pm] = dep.Deposit
@@ -195,6 +200,9 @@ func (s *Standalone) PaymasterDeposit() modules.BatchHandlerFunc {
 			deps[pm] = big.NewInt(0).Sub(deps[pm], op.GetMaxPrefund())
 			if deps[pm].Cmp(common.Big0) < 0 {
 				ctx.MarkOpIndexForRemoval(i)
+
+				logger.Shared().WithValues("userop", op).
+					Info("userop added to pending removal due to insufficient prefund")
 			}
 		}
 

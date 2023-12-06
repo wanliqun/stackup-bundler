@@ -124,7 +124,7 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	// based on more specific strategies.
 	batch, err := i.mempool.Dump(ep)
 	if err != nil {
-		l.Error(err, "bundler run error")
+		l.Error(err, "bundler run error - failed to dump mempool")
 		return nil, err
 	}
 	if len(batch) == 0 {
@@ -135,7 +135,7 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	// Get current block basefee
 	bf, err := i.gbf()
 	if err != nil {
-		l.Error(err, "bundler run error")
+		l.Error(err, "bundler run error - failed to get block basefee")
 		return nil, err
 	}
 
@@ -144,7 +144,7 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	if bf != nil {
 		gt, err = i.ggt()
 		if err != nil {
-			l.Error(err, "bundler run error")
+			l.Error(err, "bundler run error - failed to get gas tip")
 			return nil, err
 		}
 	}
@@ -152,14 +152,14 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	// Get suggested gas price (for networks that don't support EIP-1559)
 	gp, err := i.ggp()
 	if err != nil {
-		l.Error(err, "bundler run error")
+		l.Error(err, "bundler run error - failed to get gas price")
 		return nil, err
 	}
 
 	// Create context and execute modules.
 	ctx := modules.NewBatchHandlerContext(batch, ep, i.chainID, bf, gt, gp)
 	if err := i.batchHandler(ctx); err != nil {
-		l.Error(err, "bundler run error")
+		l.Error(err, "bundler run error - failed batch handler")
 		return nil, err
 	}
 
@@ -167,7 +167,7 @@ func (i *Bundler) Process(ep common.Address) (*modules.BatchHandlerCtx, error) {
 	rmOps := append([]*userop.UserOperation{}, ctx.Batch...)
 	rmOps = append(rmOps, ctx.PendingRemoval...)
 	if err := i.mempool.RemoveOps(ep, rmOps...); err != nil {
-		l.Error(err, "bundler run error")
+		l.Error(err, "bundler run error - failed to remove from mempool")
 		return nil, err
 	}
 
