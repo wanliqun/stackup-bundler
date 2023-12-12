@@ -14,10 +14,15 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/stackup-wallet/stackup-bundler/internal/config"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint"
 	"github.com/stackup-wallet/stackup-bundler/pkg/entrypoint/reverts"
 	"github.com/stackup-wallet/stackup-bundler/pkg/signer"
 	"github.com/stackup-wallet/stackup-bundler/pkg/userop"
+)
+
+const (
+	fallBackBinarySearchCutoff = uint64(30000)
 )
 
 // Opts contains all the fields required for submitting a transaction to call HandleOps on the EntryPoint
@@ -48,6 +53,71 @@ func toAbiType(batch []*userop.UserOperation) []entrypoint.UserOperation {
 	}
 
 	return ops
+}
+
+// EstimateBundleTxnGas returns a gas estimate required to send the bundle transaction.
+func EstimateBundleTxnGas(opts *Opts) (gas uint64, err error) {
+	ep, err := entrypoint.NewEntrypoint(opts.EntryPoint, opts.Eth)
+	if err != nil {
+		return 0, err
+	}
+
+	auth, err := bind.NewKeyedTransactorWithChainID(opts.EOA.PrivateKey, opts.ChainID)
+	if err != nil {
+		return 0, err
+	}
+
+	auth.NoSend = true
+
+	// Sometimes, the `handleOps()` gas estimation may not be accurate enough to fund the transaction execution.
+	// So we might adjust this gas fee with binary search by first setting gas limit to the estimated gas fee and
+	// then maxing out the gas limit if any error happens during the transaction simulation.
+	l := opts.GasLimit
+	r := config.Shared().MaxBatchGasLimit.Uint64()
+	f := uint64(0)
+	m := uint64(0)
+	simErr := err
+	for r-l >= fallBackBinarySearchCutoff {
+		if m == 0 {
+			m = opts.GasLimit
+		} else {
+			m = (l + r) / 2
+		}
+
+		auth.GasLimit = m
+		tx, err := ep.HandleOps(auth, toAbiType(opts.Batch), opts.Beneficiary)
+		if err != nil {
+			return 0, err
+		}
+
+		callMsg := ethereum.CallMsg{
+			From:       opts.EOA.Address,
+			To:         tx.To(),
+			Gas:        tx.Gas(),
+			GasPrice:   tx.GasPrice(),
+			GasFeeCap:  tx.GasFeeCap(),
+			GasTipCap:  tx.GasTipCap(),
+			Value:      tx.Value(),
+			Data:       tx.Data(),
+			AccessList: tx.AccessList(),
+		}
+		_, simErr = opts.Eth.CallContract(context.Background(), callMsg, nil)
+		if simErr == nil {
+			// Gas limit too high? try lower.
+			r = m - 1
+			// Set final.
+			f = m
+			continue
+		} else { // Gas limit too low? try higher.
+			l = m + 1
+		}
+	}
+
+	if f == 0 {
+		return 0, simErr
+	}
+
+	return f, nil
 }
 
 // EstimateHandleOpsGas returns a gas estimate required to call handleOps() with a given batch. A failed call

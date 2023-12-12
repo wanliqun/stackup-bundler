@@ -101,6 +101,9 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 				op := ctx.MarkOpIndexForRemoval(revert.OpIndex)
 				estRev = append(estRev, revert.Reason)
 
+				// Exclude the removed user operation from consideration for next estimation loop.
+				opts.Batch = ctx.Batch
+
 				logger.Shared().WithValues("userop", op, "revert", revert).
 					Info("userop added to pending removal due to `HandleOps` estimation revert")
 			} else {
@@ -114,27 +117,30 @@ func (r *Relayer) SendUserOperation() modules.BatchHandlerFunc {
 			return nil
 		}
 
-		// Accumulate the total gas limit of all user operations.
-		totalGasLimit := big.NewInt(0)
+		finalEst, err := transaction.EstimateBundleTxnGas(&opts)
+		if err != nil {
+			return err
+		}
+
+		opts.GasLimit = finalEst
+
+		// Calculate the total gas limit of all user operations.
+		totalUserOpGasLimit := big.NewInt(0)
 		for _, op := range ctx.Batch {
-			totalGasLimit.Add(totalGasLimit, op.GetMaxGasAvailable())
+			totalUserOpGasLimit.Add(totalUserOpGasLimit, op.GetMaxGasAvailable())
 		}
 
-		// Estimated gas limit should be no less than the total gas limit, otherwise this transaction
-		// may be failed due to out of gas.
-		if opts.GasLimit <= totalGasLimit.Uint64() {
-			opts.GasLimit = totalGasLimit.Uint64()
-		} else {
-			// Also, bundler could lose money if estimated gas limit exceeds the sum of gas limits
-			// for all user operations.
-			return errors.New("estimated gas limit over all user ops limit")
+		// The estimated gas limit exceeds the total gas limits of all user operations, which is not
+		// good since bundler might lose money.
+		if totalUserOpGasLimit.Uint64() < opts.GasLimit {
+			r.logger.WithValues("totalUserOpGasLimit", totalUserOpGasLimit.Uint64()).
+				WithValues("estimatedTxnGasLimit", opts.GasLimit).
+				Info("Estimated bundle gas limit exceeds the total gas limit of all user operations")
 		}
-
-		var txn *types.Transaction
-		var err error
 
 		// Call handleOps() with gas estimate. Any userOps that cause a revert at this stage will be
 		// caught and dropped in the next iteration.
+		var txn *types.Transaction
 		if config.Shared().LegacySending {
 			txn, err = transaction.HandleOps(&opts)
 		} else {
